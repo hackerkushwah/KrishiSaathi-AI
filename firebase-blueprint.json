@@ -1,0 +1,206 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Registered farmer user profile linked to Firebase Authentication",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique user identifier matching Firebase auth UID"
+        },
+        "name": {
+          "type": "string",
+          "description": "Farmer full name"
+        },
+        "email": {
+          "type": "string",
+          "description": "Farmer email address"
+        },
+        "phone": {
+          "type": "string",
+          "description": "Farmer phone number"
+        },
+        "photo_url": {
+          "type": "string",
+          "description": "Profile picture URL from Google Account"
+        },
+        "created_at": {
+          "type": "string",
+          "description": "ISO timestamp of registration"
+        },
+        "updated_at": {
+          "type": "string",
+          "description": "ISO timestamp of last update"
+        }
+      },
+      "required": ["id", "name", "email"]
+    },
+    "Farm": {
+      "title": "Farm",
+      "description": "Agricultural land and crop parameters for the farmer",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique farm record ID"
+        },
+        "user_id": {
+          "type": "string",
+          "description": "Owner farmer user ID"
+        },
+        "name": {
+          "type": "string",
+          "description": "Farm or parcel name"
+        },
+        "crop_name": {
+          "type": "string",
+          "description": "Primary crop name"
+        },
+        "acres": {
+          "type": "number",
+          "description": "Farm area in acres"
+        },
+        "soil_type": {
+          "type": "string",
+          "description": "Soil category: black, alluvial, red, clay, sandy_loam"
+        },
+        "growth_stage": {
+          "type": "string",
+          "description": "Current physiological growth stage of the crop"
+        },
+        "health_score": {
+          "type": "number",
+          "description": "Estimated farm health score (0-100)"
+        },
+        "district": {
+          "type": "string",
+          "description": "Geographical district in India"
+        },
+        "state": {
+          "type": "string",
+          "description": "Geographical state in India"
+        },
+        "created_at": {
+          "type": "string",
+          "description": "ISO creation timestamp"
+        },
+        "updated_at": {
+          "type": "string",
+          "description": "ISO update timestamp"
+        }
+      },
+      "required": ["id", "user_id", "crop_name", "acres", "soil_type", "district", "state"]
+    },
+    "Advisory": {
+      "title": "Advisory",
+      "description": "Agronomic advice generated for the farmer",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique advisory record ID"
+        },
+        "user_id": {
+          "type": "string",
+          "description": "Owner farmer user ID"
+        },
+        "farm_id": {
+          "type": "string",
+          "description": "Associated farm record ID"
+        },
+        "title": {
+          "type": "string",
+          "description": "Advisory headline"
+        },
+        "query": {
+          "type": "string",
+          "description": "Farmer prompt or trigger event"
+        },
+        "category": {
+          "type": "string",
+          "description": "Advisory category: crop, weather, soil, pest, general"
+        },
+        "summary": {
+          "type": "string",
+          "description": "Concise summary of recommendations"
+        },
+        "status": {
+          "type": "string",
+          "description": "Status: active or completed"
+        },
+        "confidence": {
+          "type": "number",
+          "description": "Model confidence level (0.0 to 1.0)"
+        },
+        "created_at": {
+          "type": "string",
+          "description": "ISO creation timestamp"
+        }
+      },
+      "required": ["id", "user_id", "title", "summary", "status", "created_at"]
+    },
+    "Scan": {
+      "title": "Scan",
+      "description": "Crop leaf lesion or tissue vision diagnostic record",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique scan record ID"
+        },
+        "user_id": {
+          "type": "string",
+          "description": "Owner farmer user ID"
+        },
+        "farm_id": {
+          "type": "string",
+          "description": "Associated farm record ID"
+        },
+        "crop_name": {
+          "type": "string",
+          "description": "Scanned crop name"
+        },
+        "possible_issue": {
+          "type": "string",
+          "description": "Identified pathogen, pest, or physiological condition"
+        },
+        "confidence": {
+          "type": "number",
+          "description": "Diagnostic confidence score (0.0 to 1.0)"
+        },
+        "severity": {
+          "type": "string",
+          "description": "Severity assessment: low, medium, high"
+        },
+        "image_url": {
+          "type": "string",
+          "description": "Scanned image URL or preview URI"
+        },
+        "created_at": {
+          "type": "string",
+          "description": "ISO timestamp of scan"
+        }
+      },
+      "required": ["id", "user_id", "crop_name", "possible_issue", "confidence", "created_at"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile collection indexed by Firebase Auth UID"
+    },
+    "/farms/{farmId}": {
+      "schema": "Farm",
+      "description": "Farm configurations indexed by farm ID and linked to farmer"
+    },
+    "/advisories/{advisoryId}": {
+      "schema": "Advisory",
+      "description": "Crop advisories indexed by advisory ID"
+    },
+    "/scans/{scanId}": {
+      "schema": "Scan",
+      "description": "Plant disease vision scans indexed by scan ID"
+    }
+  }
+}

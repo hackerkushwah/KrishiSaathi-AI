@@ -1,0 +1,63 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null && request.auth.uid != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // User profiles
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isOwner(userId)
+                    && request.resource.data.id == userId
+                    && request.resource.data.name is string
+                    && request.resource.data.email is string;
+      allow update: if isOwner(userId)
+                    && request.resource.data.id == userId;
+      allow delete: if false; // Profiles are never deleted directly
+    }
+
+    // Farm records
+    match /farms/{farmId} {
+      allow read: if isAuthenticated() && (resource.data.user_id == request.auth.uid || resource.data.user_id == 'demo');
+      allow create: if isAuthenticated() 
+                    && request.resource.data.user_id == request.auth.uid
+                    && request.resource.data.crop_name is string
+                    && request.resource.data.acres is number;
+      allow update: if isAuthenticated() 
+                    && resource.data.user_id == request.auth.uid
+                    && request.resource.data.user_id == request.auth.uid;
+      allow delete: if isAuthenticated() && resource.data.user_id == request.auth.uid;
+    }
+
+    // Advisories
+    match /advisories/{advisoryId} {
+      allow read: if isAuthenticated() && (resource.data.user_id == request.auth.uid || resource.data.user_id == 'demo');
+      allow create: if isAuthenticated() 
+                    && request.resource.data.user_id == request.auth.uid
+                    && request.resource.data.title is string;
+      allow update: if isAuthenticated() 
+                    && resource.data.user_id == request.auth.uid
+                    && request.resource.data.user_id == request.auth.uid;
+      allow delete: if isAuthenticated() && resource.data.user_id == request.auth.uid;
+    }
+
+    // Scans
+    match /scans/{scanId} {
+      allow read: if isAuthenticated() && (resource.data.user_id == request.auth.uid || resource.data.user_id == 'demo');
+      allow create: if isAuthenticated() 
+                    && request.resource.data.user_id == request.auth.uid
+                    && request.resource.data.crop_name is string;
+      allow update: if isAuthenticated() 
+                    && resource.data.user_id == request.auth.uid
+                    && request.resource.data.user_id == request.auth.uid;
+      allow delete: if isAuthenticated() && resource.data.user_id == request.auth.uid;
+    }
+  }
+}

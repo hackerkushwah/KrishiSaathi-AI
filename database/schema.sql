@@ -154,3 +154,46 @@ CREATE POLICY "Users can view observations for own farms" ON public.farm_observa
   FOR ALL USING (
     EXISTS (SELECT 1 FROM public.farms WHERE farms.id = farm_observations.farm_id AND farms.user_id = auth.uid())
   );
+
+-- =========================================================
+-- 7. CONVERSATIONS & MULTI-TURN MESSAGES
+-- =========================================================
+CREATE TABLE IF NOT EXISTS public.conversations (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  language TEXT NOT NULL DEFAULT 'en-IN',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT TIMEZONE('utc', NOW()),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT TIMEZONE('utc', NOW())
+);
+
+CREATE TABLE IF NOT EXISTS public.messages (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  conversation_id UUID NOT NULL REFERENCES public.conversations(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
+  content TEXT NOT NULL,
+  language TEXT NOT NULL DEFAULT 'en-IN',
+  message_type TEXT NOT NULL DEFAULT 'text' CHECK (message_type IN ('text', 'voice', 'image', 'image_query', 'advisory')),
+  image_url TEXT,
+  audio_url TEXT,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT TIMEZONE('utc', NOW())
+);
+
+-- Conversation Indexes
+CREATE INDEX IF NOT EXISTS idx_conversations_user_id ON public.conversations(user_id);
+CREATE INDEX IF NOT EXISTS idx_conversations_updated ON public.conversations(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON public.messages(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_messages_user_id ON public.messages(user_id);
+CREATE INDEX IF NOT EXISTS idx_messages_created ON public.messages(created_at ASC);
+
+-- Conversations & Messages RLS Policies
+ALTER TABLE public.conversations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can manage own conversations" ON public.conversations
+  FOR ALL USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can manage own messages" ON public.messages
+  FOR ALL USING (auth.uid() = user_id);

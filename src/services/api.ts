@@ -1,4 +1,14 @@
-import { Advisory, DiseaseScan, Farm, FarmerProfile, SatelliteIntelligence, SoilIntelligence, WeatherData } from '../types';
+import { 
+  Advisory, 
+  DiseaseScan, 
+  Farm, 
+  FarmerProfile, 
+  SatelliteIntelligence, 
+  SoilIntelligence, 
+  WeatherData,
+  Conversation,
+  ChatMessage
+} from '../types';
 
 class ApiService {
   private weatherCache: { data: WeatherData; timestamp: number } | null = null;
@@ -165,6 +175,91 @@ class ApiService {
     });
     if (!res.ok) throw new Error('Crop disease scanner failed');
     return await res.json();
+  }
+
+  // Voice Assistant: Speech-to-Text
+  async transcribeVoice(audioBase64: string, mimeType = 'audio/webm', languageHint = 'hi-IN'): Promise<{ text: string; language: string; provider: string }> {
+    const res = await fetch('/api/ai/voice/transcribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ audioBase64, mimeType, languageHint }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to transcribe audio');
+    }
+    return await res.json();
+  }
+
+  // Voice Assistant: Text-to-Speech
+  async speakVoice(text: string, language = 'hi-IN'): Promise<{ audioBase64: string | null; mimeType?: string; provider: string }> {
+    const res = await fetch('/api/ai/voice/speak', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, language }),
+    });
+    if (!res.ok) {
+      throw new Error('Text to speech synthesis request failed');
+    }
+    return await res.json();
+  }
+
+  // Conversational Multi-turn Chat
+  async sendChatMessage(payload: {
+    conversationId?: string;
+    message: string;
+    imageBase64?: string;
+    mimeType?: string;
+    language: string;
+    farmContext?: any;
+  }): Promise<{
+    conversationId: string;
+    userMessage: ChatMessage;
+    assistantMessage: ChatMessage;
+    structuredAdvisory?: any;
+    audioUrl?: string | null;
+  }> {
+    const res = await fetch('/api/ai/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'AI Saathi conversation failed');
+    }
+    return await res.json();
+  }
+
+  // Conversation history management
+  async getConversations(): Promise<Conversation[]> {
+    try {
+      const res = await fetch('/api/ai/conversations');
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.conversations || [];
+    } catch {
+      return [];
+    }
+  }
+
+  async getConversationMessages(conversationId: string): Promise<ChatMessage[]> {
+    try {
+      const res = await fetch(`/api/ai/conversations/${conversationId}/messages`);
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.messages || [];
+    } catch {
+      return [];
+    }
+  }
+
+  async deleteConversation(conversationId: string): Promise<void> {
+    await fetch(`/api/ai/conversations/${conversationId}`, { method: 'DELETE' });
+  }
+
+  async clearAllConversations(): Promise<void> {
+    await fetch('/api/ai/conversations', { method: 'DELETE' });
   }
 }
 

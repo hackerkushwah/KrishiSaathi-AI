@@ -152,3 +152,47 @@ export interface FarmContextPayload {
   growth_stage: string;
   language: Language;
 }
+
+export type MessageType = 'text' | 'voice' | 'image' | 'image_query' | 'advisory';
+
+export type VoiceState = 'idle' | 'listening' | 'transcribing' | 'thinking' | 'speaking';
+
+export interface AgriculturalAnalysis {
+  title?: string;
+  title_hi?: string;
+  possible_causes?: string[];
+  things_to_check?: string[];
+  immediate_action?: string[];
+  weather_consideration?: string;
+  prevention?: string[];
+  when_to_seek_help?: string;
+  confidence?: number;
+  reasoning?: string;
+  identified_crop?: string;
+  possible_issue?: string;
+  severity?: 'low' | 'medium' | 'high' | 'critical';
+}
+
+export interface ChatMessage {
+  id: string;
+  conversation_id: string;
+  user_id?: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  language?: string;
+  message_type: MessageType;
+  image_url?: string;
+  audio_url?: string;
+  metadata?: AgriculturalAnalysis;
+  created_at: string;
+}
+
+export interface Conversation {
+  id: string;
+  user_id: string;
+  title: string;
+  language: string;
+  created_at: string;
+  updated_at: string;
+  messages?: ChatMessage[];
+}

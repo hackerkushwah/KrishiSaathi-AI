@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express, { Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
@@ -10,8 +11,16 @@ import {
   FarmerProfile, 
   SatelliteIntelligence, 
   SoilIntelligence, 
-  WeatherData 
+  WeatherData,
+  Conversation,
+  ChatMessage
 } from './src/types';
+import { 
+  transcribeWithSarvam, 
+  transcribeWithGroq, 
+  synthesizeSpeechWithSarvam, 
+  generateConversationalChatResponse 
+} from './src/server/ai/providers';
 
 // Initialize Express
 const app = express();
@@ -19,6 +28,8 @@ const PORT = 3000;
 
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
+
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 // Lazy Gemini AI Client initialization
 function getGeminiClient(): GoogleGenAI | null {
@@ -34,6 +45,31 @@ function getGeminiClient(): GoogleGenAI | null {
       },
     },
   });
+}
+
+// Server-side Supabase Client initialization
+// Validates that SUPABASE_URL is clean (https://xxx.supabase.co without trailing /rest/v1/)
+function getSupabaseClient(): SupabaseClient | null {
+  const rawUrl = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+  
+  if (!rawUrl || !key) {
+    return null;
+  }
+
+  // Normalize project URL: remove trailing slashes or path segments
+  const cleanUrl = rawUrl.replace(/\/rest\/v1\/?$/, '').replace(/\/+$/, '');
+  try {
+    return createClient(cleanUrl, key, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
+    });
+  } catch (err) {
+    console.warn('[Supabase Server] Failed to initialize client:', err);
+    return null;
+  }
 }
 
 // -------------------------------------------------------------
@@ -75,9 +111,11 @@ let currentProfile: FarmerProfile = { ...defaultProfile };
 let currentFarm: Farm = { ...defaultFarm };
 let advisories: Advisory[] = [];
 let diseaseScans: DiseaseScan[] = [];
+let conversations: Conversation[] = [];
+let chatMessages: ChatMessage[] = [];
 
 // Gemini model cascade list for resilience against temporary demand spikes
-const AI_MODELS = ['gemini-3.6-flash', 'gemini-flash-latest', 'gemini-3.8-flash'];
+const AI_MODELS = ['gemini-3.6-flash', 'gemini-3.5-flash-lite'];
 
 async function generateAIContentWithFallback(ai: GoogleGenAI, options: any) {
   let lastError: any = null;
@@ -175,13 +213,17 @@ function getNormalizedSoil(soilType = 'black'): SoilIntelligence {
 // REST API ROUTES
 // -------------------------------------------------------------
 
-// 1. Health check
+// 1. Health check & configuration audit (No secret exposure)
 app.get('/api/health', (req: Request, res: Response) => {
+  const supabaseClient = getSupabaseClient();
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
     ai_available: Boolean(process.env.GEMINI_API_KEY),
     gemini_model: 'gemini-3.6-flash',
+    groq_available: Boolean(process.env.GROQ_API_KEY),
+    sarvam_available: Boolean(process.env.SARVAM_API_KEY),
+    supabase_configured: Boolean(supabaseClient),
   });
 });
 
@@ -803,6 +845,221 @@ Do NOT output any markdown code fences or conversational text. Output raw JSON o
 });
 
 // -------------------------------------------------------------
+// VOICE ASSISTANT & MULTIMODAL CONVERSATIONAL AI ROUTES
+// -------------------------------------------------------------
+
+// 1. Voice Speech-to-Text: Sarvam with Groq fallback
+app.post('/api/ai/voice/transcribe', async (req: Request, res: Response) => {
+  try {
+    const { audioBase64, mimeType = 'audio/webm', languageHint = 'hi-IN' } = req.body;
+    if (!audioBase64) {
+      return res.status(400).json({ error: 'Audio data is required for transcription' });
+    }
+
+    const cleanBase64 = audioBase64.replace(/^data:audio\/\w+;base64,/, '');
+    const audioBuffer = Buffer.from(cleanBase64, 'base64');
+
+    // Prefer Sarvam for Indian language STT
+    let result = await transcribeWithSarvam(audioBuffer, mimeType, languageHint);
+
+    // Fallback to Groq Whisper if Sarvam is not available or failed
+    if (!result || !result.text) {
+      console.log('[Voice STT] Sarvam STT unavailable or empty, falling back to Groq STT...');
+      result = await transcribeWithGroq(audioBuffer, mimeType, languageHint);
+    }
+
+    if (!result || !result.text) {
+      return res.status(502).json({
+        error: 'Unable to transcribe audio. Please speak clearly or type your question.',
+        fallback: true,
+      });
+    }
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('[Voice STT API Error]:', error?.message || error);
+    res.status(500).json({ error: 'Voice transcription failed. You can type your question instead.' });
+  }
+});
+
+// 2. Voice Text-to-Speech: Sarvam TTS (bulbul:v1)
+app.post('/api/ai/voice/speak', async (req: Request, res: Response) => {
+  try {
+    const { text, language = 'hi-IN' } = req.body;
+    if (!text || !text.trim()) {
+      return res.status(400).json({ error: 'Text is required for speech synthesis' });
+    }
+
+    const result = await synthesizeSpeechWithSarvam(text, language);
+    if (!result) {
+      // Allow frontend to use browser speech synthesis fallback
+      return res.json({
+        audioBase64: null,
+        provider: 'browser_fallback',
+        message: 'Sarvam TTS unavailable, use browser client synthesis',
+      });
+    }
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('[Voice TTS API Error]:', error?.message || error);
+    res.json({
+      audioBase64: null,
+      provider: 'browser_fallback',
+      error: error?.message || 'TTS synthesis failed',
+    });
+  }
+});
+
+// 3. Conversational Multi-turn Chat with Cross-Questioning & Multimodal Image Support
+app.post('/api/ai/chat', async (req: Request, res: Response) => {
+  try {
+    const {
+      conversationId,
+      message,
+      imageBase64,
+      mimeType = 'image/jpeg',
+      language = 'en-IN',
+      farmContext = {},
+    } = req.body;
+
+    if (!message && !imageBase64) {
+      return res.status(400).json({ error: 'Either a message or an image is required' });
+    }
+
+    const ai = getGeminiClient();
+
+    // Resolve or create conversation
+    let convId = conversationId;
+    let existingConv = conversations.find((c) => c.id === convId);
+    if (!existingConv) {
+      convId = convId || 'conv-' + Date.now().toString(36);
+      existingConv = {
+        id: convId,
+        user_id: currentProfile.id,
+        title: (message || 'Crop Analysis').substring(0, 40),
+        language,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      conversations.unshift(existingConv);
+    } else {
+      existingConv.updated_at = new Date().toISOString();
+    }
+
+    // Retrieve previous messages for context windowing
+    const history = chatMessages
+      .filter((m) => m.conversation_id === convId)
+      .slice(-6)
+      .map((m) => ({
+        role: m.role,
+        content: m.content,
+        image_url: m.image_url,
+        metadata: m.metadata,
+      }));
+
+    // Generate conversational reply
+    const farmInfo = {
+      farmer_name: currentProfile.name,
+      location: `${currentFarm.district}, ${currentFarm.state}`,
+      crop: currentFarm.crop_name,
+      acres: currentFarm.acres,
+      soil_type: currentFarm.soil_type,
+      growth_stage: currentFarm.growth_stage,
+      ...farmContext,
+    };
+
+    const userMessageContent = message || (imageBase64 ? 'Please analyze this crop photograph.' : '');
+
+    // Record user message
+    const userMsg: ChatMessage = {
+      id: 'msg-' + Date.now().toString(36) + '-u',
+      conversation_id: convId,
+      user_id: currentProfile.id,
+      role: 'user',
+      content: userMessageContent,
+      language,
+      message_type: imageBase64 ? 'image_query' : 'text',
+      image_url: imageBase64 ? 'data:' + mimeType + ';base64,' + imageBase64.replace(/^data:image\/\w+;base64,/, '') : undefined,
+      created_at: new Date().toISOString(),
+    };
+    chatMessages.push(userMsg);
+
+    // Call conversational orchestrator
+    const aiResult = await generateConversationalChatResponse({
+      ai,
+      history,
+      newMessage: userMessageContent,
+      imageBase64,
+      mimeType,
+      farmContext: farmInfo,
+      language,
+    });
+
+    // Synthesize voice audio if requested or if language is active
+    let voiceAudio: string | null = null;
+    try {
+      const ttsResult = await synthesizeSpeechWithSarvam(aiResult.textResponse, aiResult.detectedLanguage || language);
+      if (ttsResult && ttsResult.audioBase64) {
+        voiceAudio = `data:${ttsResult.mimeType};base64,${ttsResult.audioBase64}`;
+      }
+    } catch (ttsErr) {
+      console.warn('[Chat TTS] Non-blocking voice audio error:', ttsErr);
+    }
+
+    // Record assistant message
+    const assistantMsg: ChatMessage = {
+      id: 'msg-' + Date.now().toString(36) + '-a',
+      conversation_id: convId,
+      user_id: currentProfile.id,
+      role: 'assistant',
+      content: aiResult.textResponse,
+      language: aiResult.detectedLanguage,
+      message_type: voiceAudio ? 'voice' : 'text',
+      audio_url: voiceAudio || undefined,
+      metadata: aiResult.structuredAdvisory,
+      created_at: new Date().toISOString(),
+    };
+    chatMessages.push(assistantMsg);
+
+    res.json({
+      conversationId: convId,
+      userMessage: userMsg,
+      assistantMessage: assistantMsg,
+      structuredAdvisory: aiResult.structuredAdvisory,
+      audioUrl: voiceAudio,
+    });
+  } catch (error: any) {
+    console.error('[Chat API Error]:', error?.message || error);
+    res.status(500).json({ error: 'Failed to process chat conversation' });
+  }
+});
+
+// 4. Conversation History Management
+app.get('/api/ai/conversations', (req: Request, res: Response) => {
+  res.json({ conversations });
+});
+
+app.get('/api/ai/conversations/:id/messages', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const messages = chatMessages.filter((m) => m.conversation_id === id);
+  res.json({ messages });
+});
+
+app.delete('/api/ai/conversations/:id', (req: Request, res: Response) => {
+  const { id } = req.params;
+  conversations = conversations.filter((c) => c.id !== id);
+  chatMessages = chatMessages.filter((m) => m.conversation_id !== id);
+  res.json({ status: 'deleted', id });
+});
+
+app.delete('/api/ai/conversations', (req: Request, res: Response) => {
+  conversations = [];
+  chatMessages = [];
+  res.json({ status: 'cleared' });
+});
+
+// -------------------------------------------------------------
 // VITE INTEGRATION & SERVER STARTUP
 // -------------------------------------------------------------
 async function startServer() {
@@ -821,7 +1078,11 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[KrishiSaathi AI] Full-stack Server listening on http://0.0.0.0:${PORT}`);
+    console.log('\n========================================================');
+    console.log('  KrishiSaathi AI is running locally:');
+    console.log(`  ➜ Local:   http://localhost:${PORT}/`);
+    console.log(`  ➜ Network: http://127.0.0.1:${PORT}/`);
+    console.log('========================================================\n');
   });
 }
 
